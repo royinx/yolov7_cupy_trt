@@ -1,0 +1,35 @@
+FROM nvcr.io/nvidia/tensorrt:22.08-py3
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0
+
+RUN python3 -m pip install pycuda cupy-cuda11x pynvjpeg line_profiler 
+
+# COPY requirements.txt requirements.txt
+# RUN python3 -m pip install cython numpy==1.22.4 && \
+#     python3 -m pip install --user -r requirements.txt &&\ 
+#     python3 -m pip install --upgrade numpy pandas scipy
+     
+
+# sudo apt install -y nvidia-driver-515
+# docker build -t vanjie_trt -f dockerfile_trt .
+# docker run --rm \
+#            --runtime=nvidia \
+#            --name=vanjie_trt \
+#            --privileged \
+#            -it \
+#            -v $PWD:/py/ \
+#            -w /py \
+#            vanjie_trt bash
+
+# # git clone https://github.com/WongKinYiu/yolov7
+# # git clone https://github.com/Monday-Leo/YOLOv7_Tensorrt.git
+# # cp YOLOv7_Tensorrt/EfficientNMS.py yolov7
+# # cp YOLOv7_Tensorrt/export_onnx.py yolov7
+
+# cd yolov7
+# python export_onnx.py --weights /py/best.pt
+# trtexec --onnx=/py/best.onnx --saveEngine=/py/yolov7_fp16.engine --fp16
+
+# cd ../YOLOv7_Tensorrt
+# python3 infer.py

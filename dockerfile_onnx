@@ -1,0 +1,11 @@
+FROM nvcr.io/nvidia/pytorch:21.08-py3
+RUN apt update && \
+    apt install -y zip htop screen libgl1-mesa-glx && \
+    pip install seaborn thop
+
+WORKDIR /yolov7
+
+# docker build -t trt -f dockerfile_onnx .
+# docker run --rm -it -v $PWD:/py -w /py --runtime nvidia -p 20082:8080 trt bash
+# pip3 install notebook
+# jupyter notebook --allow-root --port 8080 --ip 0.0.0.0
