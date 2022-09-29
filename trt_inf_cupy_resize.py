@@ -17,6 +17,13 @@ trt.init_libnvinfer_plugins(None,"")
 pinned_memory_pool = cp.cuda.PinnedMemoryPool()
 cp.cuda.set_pinned_memory_allocator(pinned_memory_pool.malloc)
 
+from _module import SourceModule
+module = cp.RawModule(code=SourceModule)
+
+cuResizeKer = module.get_function("cuResize")
+TransposeKer = module.get_function("Transpose")
+TransNorKer = module.get_function("Transpose_and_normalise")
+
 class HostDeviceMem(object):
     def __init__(self, host_mem, device_mem):
         self.host = host_mem
@@ -81,10 +88,18 @@ class TensorRT(object):
 class YoloTRT(object):
     def __init__(self):
         super().__init__()
-        self.max_batch_size = 64
-        print(1)
+        self.max_batch_size = 8
         self.trt = TensorRT(f"/py/ped_yolov7_{self.max_batch_size}.trt")
         
+
+    # cuResizeKer(inp["device"], out["device"], 
+    #            np.int32(src_h), np.int32(src_w),
+    #            np.int32(dst_h), np.int32(dst_w),
+    #            np.float32(src_h/dst_h), np.float32(src_w/dst_w),
+    #            block=(1024, 1, 1),
+    #            grid=(int(DST_SIZE/3//1024)+1,batch,3),
+    #            stream=stream)
+
     def _preprocess(self, input_array:np.ndarray) -> np.ndarray: # 
         rescale_info = []
         
@@ -154,17 +169,15 @@ def resize_image(img: np.ndarray, out_img: np.ndarray) -> (float, int, int):
 
 
 def unit_test():
-    input_image_path = '/py/crop/9/3.jpg'
+    input_image_path = '/py/3.jpg'
     yolo = YoloTRT()
     batch_size = yolo.max_batch_size
 
     with open(input_image_path, 'rb') as infile:
         image_raw = nj.decode(infile.read())
         image_raw = image_raw[:,:,::-1] # to RGB
-    image_raw = np.tile(image_raw,[66,1,1,1])
+    image_raw = np.tile(image_raw,[8,1,1,1])
 
-
-    print(batch_size)
     for i in range(0, len(image_raw), batch_size):
         batch = image_raw[i:i+batch_size]
         rs = yolo.inference(batch)
@@ -178,7 +191,6 @@ def unit_test():
                 cv2.rectangle(img,tuple(box[:2].tolist()),tuple(box[2:].tolist()),color,2)
                 cv2.putText(img,name,(int(box[0]), int(box[1]) - 2),cv2.FONT_HERSHEY_SIMPLEX,0.75,color,thickness=2)
             cv2.imwrite("test4.jpg",img[:,:,::-1])
-        print("sleeping")
         import time
         time.sleep(3)
 

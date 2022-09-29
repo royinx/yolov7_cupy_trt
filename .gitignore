@@ -1,2 +1,5 @@
 *.trt
 *.pkl
+*.pyc
+*.cache
+__pycache__/
