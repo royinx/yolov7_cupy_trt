@@ -3,3 +3,10 @@
 *.pyc
 *.cache
 __pycache__/
+int8/downloaded_images/
+*.jpg
+*.pt
+*.ptl
+*.onnx
+*.lock
+*.zip

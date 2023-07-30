@@ -1,9 +1,10 @@
-FROM nvcr.io/nvidia/tensorrt:21.07-py3
+FROM nvcr.io/nvidia/tensorrt:22.12-py3
+# FROM nvcr.io/nvidia/tensorrt:21.07-py3
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0
 
-RUN python3 -m pip install pycuda cupy-cuda11x pynvjpeg line_profiler 
+RUN python3 -m pip install pycuda cupy-cuda11x pynvjpeg line_profiler torch opencv-python
 
 # COPY requirements.txt requirements.txt
 # RUN python3 -m pip install cython numpy==1.22.4 && \

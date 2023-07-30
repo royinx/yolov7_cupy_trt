@@ -5,7 +5,7 @@ import cupy as cp
 import tensorrt as trt
 import cv2
 
-from nvjpeg import NvJpeg 
+from nvjpeg import NvJpeg
 from line_profiler import LineProfiler
 
 nj = NvJpeg()
@@ -17,12 +17,10 @@ trt.init_libnvinfer_plugins(None,"")
 pinned_memory_pool = cp.cuda.PinnedMemoryPool()
 cp.cuda.set_pinned_memory_allocator(pinned_memory_pool.malloc)
 
-from _module import SourceModule
-module = cp.RawModule(code=SourceModule)
+# with open('lib_cuResize.cu', 'r', encoding="utf-8") as reader:
+#     module = cp.RawModule(code=reader.read())
 
-cuResizeKer = module.get_function("cuResize")
-TransposeKer = module.get_function("Transpose")
-TransNorKer = module.get_function("Transpose_and_normalise")
+# cuResizeKer = module.get_function("cuResize")
 
 class HostDeviceMem(object):
     def __init__(self, host_mem, device_mem):
@@ -41,7 +39,7 @@ class TensorRT(object):
         self.TRT_LOGGER = trt.Logger()
         self.engine = self.get_engine(engine_file)
         self.context = self.engine.create_execution_context()
-        self.max_batch_size = self.engine.max_batch_size
+        # self.max_batch_size = self.engine.max_batch_size
         self.allocate_buffers()
 
     def get_engine(self, engine_file_path):
@@ -58,7 +56,7 @@ class TensorRT(object):
 
         trt use gpu array to run inference.
         while bindings store the gpu array ptr , via the method : int(cupy.ndarray.data) / cp.cuda.alloc_pinned_memory / cuda.mem_alloc
-        
+
         So HostDeviceMem is not hard requirement but a easier way to pin the memory and copy back to host.
         """
         self.inputs = []
@@ -67,18 +65,19 @@ class TensorRT(object):
         self.stream = cp.cuda.Stream(non_blocking=False)
 
         for binding in self.engine:
-            shape = self.engine.get_binding_shape(binding)
-            dtype = trt.nptype(self.engine.get_binding_dtype(binding))
+            shape = self.engine.get_tensor_shape(binding)
+            dtype = trt.nptype(self.engine.get_tensor_dtype(binding))
             device_array = cp.empty(shape, dtype)
             self.bindings.append(int(device_array.data)) # cupy array ptr
             # Append to the appropriate list.
-            if self.engine.binding_is_input(binding):
+            if self.engine.get_tensor_mode(binding) == trt.TensorIOMode.INPUT:
                 self.inputs.append(HostDeviceMem(None, device_array))
-            else:
+            elif self.engine.get_tensor_mode(binding) == trt.TensorIOMode.OUTPUT:
                 self.outputs.append(HostDeviceMem(None, device_array))
-    
+
     @profile
     def inference(self,inputs:np.ndarray) -> list: # input: <NCHW>
+        print(self.inputs[0].device.shape , inputs.shape)
         self.inputs[0].device.set(inputs)
         self.context.execute_async_v2(bindings=self.bindings,
                                     stream_handle=self.stream.ptr)
@@ -88,25 +87,17 @@ class TensorRT(object):
 class YoloTRT(object):
     def __init__(self):
         super().__init__()
-        self.max_batch_size = 8
-        self.trt = TensorRT(f"/py/ped_yolov7_{self.max_batch_size}.trt")
-        
+        self.max_batch_size = 64
+        # self.trt = TensorRT(f"/py/ped_yolov7_fp16.trt")
+        self.trt = TensorRT(f"/py/ped_yolov7_int8.trt")
 
-    # cuResizeKer(inp["device"], out["device"], 
-    #            np.int32(src_h), np.int32(src_w),
-    #            np.int32(dst_h), np.int32(dst_w),
-    #            np.float32(src_h/dst_h), np.float32(src_w/dst_w),
-    #            block=(1024, 1, 1),
-    #            grid=(int(DST_SIZE/3//1024)+1,batch,3),
-    #            stream=stream)
-
-    def _preprocess(self, input_array:np.ndarray) -> np.ndarray: # 
+    def _preprocess(self, input_array:np.ndarray) -> np.ndarray: #
         rescale_info = []
-        
+
         output_array = np.zeros((640,640,3),input_array.dtype) # NHWC
         resize_scale, top_pad, left_pad, out_img = resize_image(input_array[0], output_array)
         # print(out_img)
-        cv2.imwrite("test3.jpg",out_img[:,:,::-1])
+        cv2.imwrite("test_input.jpg",out_img[:,:,::-1])
         rescale_info.append([resize_scale, top_pad, left_pad])
         output_array = np.tile(out_img,[self.max_batch_size,1,1,1]) # NHWC
         output_array = np.transpose(output_array,(0,3,1,2)) # NHWC -> NCHW
@@ -135,7 +126,7 @@ class YoloTRT(object):
             scores = det_scores[:num_dets[0]]
             classes = det_classes[:num_dets[0]]
             rs.append([boxes, scores, classes])
-        
+
         return rs
 
     @profile
@@ -143,7 +134,6 @@ class YoloTRT(object):
 
         pre, rescale_info = self._preprocess(input_array) # in: <NHWC> raw image batch , out: <NCHW> resized <N,3,608,608>
         trt_outputs = self._inference(pre) # out: [(N, 1), (N, 100, 4), (N, 100), (N, 100)]
-
         feat_batch = [[trt_outputs[j][i] for j in range(len(trt_outputs))] for i in range(len(trt_outputs[0]))]
         post = self._postprocess(feat_batch, rescale_info)
 
@@ -169,43 +159,49 @@ def resize_image(img: np.ndarray, out_img: np.ndarray) -> (float, int, int):
 
 
 def unit_test():
-    input_image_path = '/py/3.jpg'
     yolo = YoloTRT()
     batch_size = yolo.max_batch_size
 
-    with open(input_image_path, 'rb') as infile:
-        image_raw = nj.decode(infile.read())
-        image_raw = image_raw[:,:,::-1] # to RGB
-    image_raw = np.tile(image_raw,[8,1,1,1])
+    # prepare input data
+    if False:
+        input_image_path = '/py/test_img/0.jpg'
+        with open(input_image_path, 'rb') as infile:
+            image_raw = nj.decode(infile.read())
+            image_raw = image_raw[:,:,::-1] # to RGB
+        image_raw = np.tile(image_raw,[batch_size,1,1,1])
+    else: # video
+        video = cv2.VideoCapture("test.mp4")
+        image_raw = []
+        count = 0
+        while video.isOpened():
+            ret, img = video.read()
+            if count % 10 == 0:
+                if ret:
+                    image_raw.append(img[:,:,::-1])
+                else:
+                    break
+            count+=1
+        image_raw = np.asarray(image_raw)
 
-    for i in range(0, len(image_raw), batch_size):
+
+    for i in range(0, len(image_raw), 1):
         batch = image_raw[i:i+batch_size]
         rs = yolo.inference(batch)
-
-        
         for img , (boxes,scores,classes) in zip(batch,rs):
             for box, score, cl in zip(boxes,scores,classes):
+                if cl not in [0,1] : continue
                 name = str(cl)
                 color = (np.random.randint(0,255), np.random.randint(0,255), np.random.randint(0,255))
                 name += ' ' + str(round(float(score),3))
                 cv2.rectangle(img,tuple(box[:2].tolist()),tuple(box[2:].tolist()),color,2)
                 cv2.putText(img,name,(int(box[0]), int(box[1]) - 2),cv2.FONT_HERSHEY_SIMPLEX,0.75,color,thickness=2)
-            cv2.imwrite("test4.jpg",img[:,:,::-1])
-        import time
-        time.sleep(3)
-
-
+            # cv2.imwrite("test_output.jpg",img[:,:,::-1])
+            # import time
+            # time.sleep(1)
     # profile.print_stats()
-
 
 def main():
     unit_test()
 
 if __name__ == '__main__':
     main()
-
-
-# python /py/yolov7/export.py --weights /py/best.pt --batch-size 8 --grid --end2end --simplify --topk-all 100 --iou-thres 0.45 --conf-thres 0.25 --img-size 640 640
-# mv /py/best.onnx /py/ped_yolov7_8.onnx
-# trtexec --onnx=/py/ped_yolov7_64.onnx --saveEngine=/py/ped_yolov7_64.trt  --fp16 --workspace=8192 --explicitBatch --dumpOutput --timingCacheFile=timing.cache
-# clear && python3 trt_inf_cupy_resize.py
